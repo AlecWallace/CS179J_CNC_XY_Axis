@@ -1,19 +1,23 @@
+//Author Alec Wallace
+
+
 //https://www.dfrobot.com/wiki/index.php/TB6600_Stepper_Motor_Driver_SKU:_DRI0043
+//For info on the signals that need to be sent to the motor drivers
 //When “EN” is Low, the motor is in a free states (Off-line mode). In this mode, you can adjust the motor shaft position manually; when “EN” is High (Vacant), the motor will be in an automatic control mode.
 //"Direction" is the motor direction signal pin,
 //"PULSE" is the motor pulse signal pin. Once the driver get a pulse, the motor move a step.
 
 #include <avr/io.h>
 
-const int sizeX = 5; 
-const int sizeY = 5;
+const int sizeX = 10; 
+const int sizeY = 10;
 
 const int stepXMax = 10;
 const int stepYMax = 10;
-//Port D needs to be set to output for this
+
 int stepCounterY = 0;
 int stepCounterX = 0;
-//Starting at 0 will cause issues for restarts
+
 
 class point{
   public:
@@ -115,6 +119,7 @@ bool moveForward(volatile uint8_t *port, volatile uint8_t *pin, int steps, bool 
       stepCounterY++;
     }
     //error checking
+    //Unused because we don't have enough memory on the Atmega to get this far
     if(((~*pin>>6) & 0x01)==1){
       if(XY && stepCounterX != stepXMax){
         //jumped ahead in steps
@@ -125,14 +130,14 @@ bool moveForward(volatile uint8_t *port, volatile uint8_t *pin, int steps, bool 
         return false;
       }
     }
-    /*if(stepCounterX == stepXMax && !(((~*pin>>6) & 0x01)==1)){
+    if(stepCounterX == stepXMax && !(((~*pin>>6) & 0x01)==1)){
       //missed steps
       return false;
     }
     if(stepCounterY == stepYMax && !(((~*pin>>6) & 0x01)==1)){
       //missed steps
       return false;
-    }*/
+    }
   }
   return true;
 }
@@ -168,14 +173,14 @@ bool moveBack(volatile uint8_t *port, volatile uint8_t *pin, int steps, bool XY)
         return false;
       }
     }
-    /*if(stepCounterX == 0 && !(((~*pin>>5) & 0x01)==1)){
+    if(stepCounterX == 0 && !(((~*pin>>5) & 0x01)==1)){
       //missed steps
       return false;
     }
     if(stepCounterY == 0 && !(((~*pin>>5) & 0x01)==1)){
       //missed steps
       return false;
-    }*/
+    }
   }
   return true;
 }
@@ -192,7 +197,6 @@ bool restageMotor(volatile uint8_t *port, volatile uint8_t *pin, bool XY){
 
 bool restageMotorError(volatile uint8_t *port1, volatile uint8_t *pin1 ,volatile uint8_t *port2, volatile uint8_t *pin2){
   //restage after an error don't count steps back
-  //TODO
   *port1 = *port1 & 0xFD;
   *port2 = *port2 & 0xFD;
   bool flagOneDone = false;
@@ -237,10 +241,10 @@ bool testMotor(volatile uint8_t *port1, volatile uint8_t *pin1 ,volatile uint8_t
   return false;
 }
 
+//find the path based on the image matrix
+//path and pathsize are updated
 void depthFirstSearch(int matrix[sizeY][sizeX], point path[sizeX*sizeY], int &pathSize){
-  //stack<point> history;
-  point history[100]; //takes up a lot of memory might consider switching to breadth first search
-  //vector<point> path;
+  point history[100];
   
   int step = -1;
 
@@ -261,23 +265,19 @@ void depthFirstSearch(int matrix[sizeY][sizeX], point path[sizeX*sizeY], int &pa
       path[pathSize-1].x = p.x;
       path[pathSize-1].y = p.y;
       pathSize++;
-      //addPoint(path,p,pathSize); //TODO
       step--;
 
       p.getPossibleNext(matrix,history,size);
     }
   }
+  pathSize--; //testing proved we need this
 }
 
-//the meat of what we are doing
+//converts the path to signals sent to the motor drivers
+//dynamically create the backtrace
 bool traverse(volatile uint8_t *port1, volatile uint8_t *pin1 ,volatile uint8_t *port2, volatile uint8_t *pin2, point path[sizeX*sizeY], int size){
   initMotor(port1);
   initMotor(port2);
-  moveForward(port2,pin2,1,false);
-  moveForward(port1,pin1,1,true);
-  
-  restageMotor(port1,pin1,true);
-  restageMotor(port2,pin2,false);
   
   for(int i=0; i<size-1;i++){
     int tempX = path[i+1].x-path[i].x;
@@ -287,17 +287,17 @@ bool traverse(volatile uint8_t *port1, volatile uint8_t *pin1 ,volatile uint8_t 
         return false;
       }
     }
-    if(tempX == -1 && tempY == 0){
+    else if(tempX == -1 && tempY == 0){
       if(!moveBack(port1,pin1,1,true)){
         return false;
       }
     }
-    if(tempY == 1 && tempX == 0){
+    else if(tempY == 1 && tempX == 0){
       if(!moveForward(port2,pin2,1,false)){
         return false;
       }
     }
-    if(tempY == -1 && tempX == 0){
+    else if(tempY == -1 && tempX == 0){
       if(!moveBack(port2,pin2,1,false)){
         return false;
       }
@@ -305,7 +305,6 @@ bool traverse(volatile uint8_t *port1, volatile uint8_t *pin1 ,volatile uint8_t 
     else{
       //backtracking
       //If the next step in the queue is more than 1 step away
-      //Needs more testing
       for(int j=i; j>1; j--){
         int backtrackTempX = path[j-1].x-path[j].x;
         int backtrackTempY = path[j-1].y-path[j].y;
@@ -330,25 +329,25 @@ bool traverse(volatile uint8_t *port1, volatile uint8_t *pin1 ,volatile uint8_t 
           }
         }
         //we reached the backpoint
-        if((path[j-1].x-path[i+1].x == 1) && (path[j-1].y-path[i+1].y == 0)){
+        if((path[j-1].x-path[i+1].x == -1) && (path[j-1].y-path[i+1].y == 0)){
           if(!moveForward(port1,pin1,1,true)){
             return false;
           }
           break;
         }
-        if((path[j-1].x-path[i+1].x == -1) && (path[j-1].y-path[i+1].y == 0)){
+        else if((path[j-1].x-path[i+1].x == 1) && (path[j-1].y-path[i+1].y == 0)){
           if(!moveBack(port1,pin1,1,true)){
             return false;
           }
           break;
         }
-        if((path[j-1].y-path[i+1].y == 1) && (path[j-1].x-path[i+1].x == 0)){
+        else if((path[j-1].y-path[i+1].y == -1) && (path[j-1].x-path[i+1].x == 0)){
           if(!moveForward(port2,pin2,1,false)){
             return false;
           }
           break;
         }
-        if((path[j-1].y-path[i+1].y == -1) && (path[j-1].x-path[i+1].x == 0)){
+        else if((path[j-1].y-path[i+1].y == 1) && (path[j-1].x-path[i+1].x == 0)){
           if(!moveBack(port2,pin2,1,false)){
             return false;
           }
@@ -357,9 +356,5 @@ bool traverse(volatile uint8_t *port1, volatile uint8_t *pin1 ,volatile uint8_t 
       }
     }
   }
-  //if error restage motor error()
   return true;
 }
-
-//interupt handeler Stop
-//stop the motor
